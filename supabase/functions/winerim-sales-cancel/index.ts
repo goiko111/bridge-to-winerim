@@ -2,11 +2,13 @@ import { assertPost, json, parseJson, preflight, requirePlatformAdmin, safeError
 import { agoraReadAfterClose } from "../_shared/reconciliation-v2/agoraFreshness.ts";
 import { activeBinding } from "../_shared/reconciliation-v2/runtime.ts";
 import { assertCancelExecutionAllowed, buildCancelPayload, parseCancelResponse, type CancelEntry } from "../_shared/winerimSalesCancel.ts";
+import { canApprove, describeCancel } from "../_shared/cancelQueueView.ts";
 
-// Manual cancellations in Winerim: PREPARE (admin A) -> APPROVE (admin B, distinct) -> EXECUTE -> READBACK.
-// Never touches /stock. Every request is persisted with both approvers and the readback.
+// Manual cancellations in Winerim: PREPARE (admin A) -> APPROVE (admin B, distinct; executes) -> READBACK.
+// Never touches stock directly. Every request is persisted with both approvers and the readback.
 const BASE = "https://app.winerim.com/api/v2";
 const SOURCE_SYSTEM = "agora";
+const SECOND_APPROVER = "goiko111@gmail.com";
 const err = (m: string, status: number, code: string) => Object.assign(new Error(m), { status, code });
 const UUID = /^[0-9a-f-]{36}$/i;
 
@@ -23,6 +25,25 @@ async function readback(tok: string, correlationId: string) {
   const r = await fetch(`${BASE}/sales/status?correlationId=${encodeURIComponent(correlationId)}`, { headers: { Accept: "application/json", "WINERIM-API-TOKEN": tok } });
   const body = await r.json().catch(() => null);
   return { http: r.status, state: (body as { state?: string } | null)?.state ?? null, body };
+}
+
+// deno-lint-ignore no-explicit-any
+async function executeApproved(db: any, row: any) {
+  if (row.status !== "APPROVED") throw err("La petición no está aprobada", 409, "CANCEL_NOT_APPROVED");
+  assertCancelExecutionAllowed({ approvedBy: row.requested_by, secondCheckBy: row.approved_by });
+  const { data: claimed } = await db.from("winerim_cancel_requests").update({ status: "EXECUTING", executed_at: new Date().toISOString() }).eq("id", row.id).eq("status", "APPROVED").select("id");
+  if (!claimed?.length) throw err("Otra ejecución está en curso", 409, "CANCEL_ALREADY_EXECUTING");
+  const tok = await token(db, row.connection_id);
+  const res = await fetch(`${BASE}/sales/cancel`, { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json", "WINERIM-API-TOKEN": tok, "X-Correlation-Id": row.correlation_id }, body: JSON.stringify(row.payload) });
+  const resBody = await res.json().catch(() => null);
+  let status = "DONE"; let parsed: unknown = null; let errorCode: string | null = null;
+  try {
+    const p = parseCancelResponse(res.status, resBody, row.payload); parsed = p;
+    status = p.requiresReadback ? "NEEDS_READBACK" : p.perEntry.some((e) => e.next !== "DONE") ? "MANUAL" : "DONE";
+  } catch (e) { status = "NEEDS_READBACK"; errorCode = String((e as { code?: string }).code ?? "CANCEL_RESPONSE_INVALID"); }
+  const rb = await readback(tok, row.correlation_id);
+  await db.from("winerim_cancel_requests").update({ status, response: { http: res.status, body: resBody, parsed }, readback: rb, error_code: errorCode }).eq("id", row.id);
+  return { ok: status === "DONE", status, http: res.status, parsed, readback: { http: rb.http, state: rb.state } };
 }
 
 Deno.serve(async (request) => {
@@ -48,6 +69,33 @@ Deno.serve(async (request) => {
       return json(request, { ok: true, request: data, payload });
     }
 
+    if (action === "LIST") {
+      const { data: rows } = await db.from("winerim_cancel_requests").select("id,connection_id,status,payload,eligibility,requested_by,approved_by,created_at,approved_at,error_code,readback").order("created_at", { ascending: false }).limit(100);
+      const connIds = [...new Set((rows ?? []).map((r) => r.connection_id))];
+      const { data: conns } = connIds.length ? await db.from("pos_connections").select("id,location_name").in("id", connIds) : { data: [] };
+      const userIds = [...new Set((rows ?? []).flatMap((r) => [r.requested_by, r.approved_by]).filter(Boolean))] as string[];
+      const emails: Record<string, string> = {};
+      for (const id of userIds) { const { data } = await db.auth.admin.getUserById(id); if (data?.user?.email) emails[id] = data.user.email; }
+      const names = Object.fromEntries((conns ?? []).map((c) => [c.id, c.location_name]));
+      return json(request, { ok: true, me: userId, items: (rows ?? []).map((r) => ({ id: r.id, status: r.status, location: names[r.connection_id] ?? r.connection_id, ...describeCancel(r.payload, r.eligibility), requestedBy: emails[r.requested_by] ?? r.requested_by, requestedById: r.requested_by, approvedBy: r.approved_by ? emails[r.approved_by] ?? r.approved_by : null, createdAt: r.created_at, approvedAt: r.approved_at, errorCode: r.error_code, readbackState: (r.readback as { state?: string } | null)?.state ?? null, canApprove: canApprove(r.requested_by, userId, r.status) })) });
+    }
+
+    if (action === "INVITE_SECOND_APPROVER") {
+      // One fixed account only (Goiko's decision 2026-10-02): invited by email, sets his own password; admin role granted now.
+      const { data: list } = await db.auth.admin.listUsers({ perPage: 200 });
+      let user = list?.users?.find((u) => u.email?.toLowerCase() === SECOND_APPROVER);
+      if (!user) {
+        const redirectTo = String((body as { redirectTo?: string }).redirectTo ?? "");
+        const { data, error } = await db.auth.admin.inviteUserByEmail(SECOND_APPROVER, /^https:\/\/[a-z0-9.-]+\/reset-password$/.test(redirectTo) ? { redirectTo } : undefined);
+        if (error || !data?.user) throw err("No se pudo invitar", 500, "INVITE_FAILED");
+        user = data.user;
+      }
+      const { data: has } = await db.from("user_roles").select("id").eq("user_id", user.id).eq("role", "admin").is("connection_id", null).limit(1);
+      const { error } = has?.length ? { error: null } : await db.from("user_roles").insert({ user_id: user.id, role: "admin", connection_id: null });
+      if (error) throw err("No se pudo asignar el rol", 500, "ROLE_GRANT_FAILED");
+      return json(request, { ok: true, userId: user.id, confirmed: !!user.email_confirmed_at });
+    }
+
     if (!body.requestId || !UUID.test(body.requestId)) throw err("requestId inválido", 400, "INVALID_REQUEST_ID");
     const { data: row } = await db.from("winerim_cancel_requests").select("*").eq("id", body.requestId).maybeSingle();
     if (!row) throw err("Petición no encontrada", 404, "CANCEL_NOT_FOUND");
@@ -56,27 +104,15 @@ Deno.serve(async (request) => {
       if (row.status !== "PENDING_APPROVAL") throw err("La petición no está pendiente", 409, "CANCEL_NOT_PENDING");
       if (row.requested_by === userId) throw err("La aprobación debe hacerla otra persona", 403, "CANCEL_SELF_APPROVAL");
       const patch = action === "APPROVE" ? { status: "APPROVED", approved_by: userId, approved_at: new Date().toISOString() } : { status: "REJECTED", approved_by: userId, approved_at: new Date().toISOString() };
-      const { error } = await db.from("winerim_cancel_requests").update(patch).eq("id", row.id).eq("status", "PENDING_APPROVAL");
-      if (error) throw err("No se pudo guardar la aprobación", 500, "CANCEL_APPROVE_FAILED");
-      return json(request, { ok: true, status: patch.status });
+      const { data: saved, error } = await db.from("winerim_cancel_requests").update(patch).eq("id", row.id).eq("status", "PENDING_APPROVAL").select("*");
+      if (error || !saved?.length) throw err("No se pudo guardar la aprobación", 500, "CANCEL_APPROVE_FAILED");
+      if (action === "REJECT") return json(request, { ok: true, status: "REJECTED" });
+      // Approving executes immediately, followed by readback in Winerim.
+      return json(request, await executeApproved(db, saved[0]));
     }
 
     if (action === "EXECUTE") {
-      if (row.status !== "APPROVED") throw err("La petición no está aprobada", 409, "CANCEL_NOT_APPROVED");
-      assertCancelExecutionAllowed({ approvedBy: row.requested_by, secondCheckBy: row.approved_by });
-      const { data: claimed } = await db.from("winerim_cancel_requests").update({ status: "EXECUTING", executed_at: new Date().toISOString() }).eq("id", row.id).eq("status", "APPROVED").select("id");
-      if (!claimed?.length) throw err("Otra ejecución está en curso", 409, "CANCEL_ALREADY_EXECUTING");
-      const tok = await token(db, row.connection_id);
-      const res = await fetch(`${BASE}/sales/cancel`, { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json", "WINERIM-API-TOKEN": tok, "X-Correlation-Id": row.correlation_id }, body: JSON.stringify(row.payload) });
-      const resBody = await res.json().catch(() => null);
-      let status = "DONE"; let parsed: unknown = null; let errorCode: string | null = null;
-      try {
-        const p = parseCancelResponse(res.status, resBody, row.payload); parsed = p;
-        status = p.requiresReadback ? "NEEDS_READBACK" : p.perEntry.some((e) => e.next !== "DONE") ? "MANUAL" : "DONE";
-      } catch (e) { status = "NEEDS_READBACK"; errorCode = String((e as { code?: string }).code ?? "CANCEL_RESPONSE_INVALID"); }
-      const rb = await readback(tok, row.correlation_id);
-      await db.from("winerim_cancel_requests").update({ status, response: { http: res.status, body: resBody, parsed }, readback: rb, error_code: errorCode }).eq("id", row.id);
-      return json(request, { ok: status === "DONE", status, http: res.status, parsed, readback: { http: rb.http, state: rb.state } });
+      return json(request, await executeApproved(db, row));
     }
 
     if (action === "READBACK") {
