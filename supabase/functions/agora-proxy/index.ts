@@ -1,3 +1,4 @@
+import { pickLiveGlassFamily } from "../_shared/agoraGlassFamily.ts";
 import { restoreAgoraProductXml } from "../_shared/agoraRestoreProduct.ts";
 import { AUTO_CREATE_MAX_PER_CYCLE, applyAutoCreateCap, guardCreateFormats } from "../_shared/agoraAutoCreateGuard.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -5002,6 +5003,13 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
 
   // deno-lint-ignore no-explicit-any
   function findFamilyId(wineType: string | null, formatType?: string, wine?: any): { id: string; needsCreate: boolean; familyName: string; parentId?: string; grandparentId?: string; color?: string; buttonText?: string } {
+    // Glasses always land in the live COPAS WINERIM family when the location
+    // has one (or in an explicit "copa" mapping), before any type/region
+    // routing rule can send them to the bottle family (Albariza 2026-10-02).
+    if (String(formatType || "").toUpperCase() === "GLASS") {
+      const glassFamily = pickLiveGlassFamily(families, customFamilyMappings?.copa);
+      if (glassFamily) return { id: glassFamily.id, needsCreate: false, familyName: glassFamily.name };
+    }
     // Per-connection two-level layout used by El Porton de Sorni:
     // wine type root > Spanish DO/region OR foreign country. Glasses and
     // magnums keep their dedicated format families.
