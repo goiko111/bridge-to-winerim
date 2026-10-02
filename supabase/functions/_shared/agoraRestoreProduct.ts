@@ -6,7 +6,13 @@ export function restoreAgoraProductXml(
   mainPrice: string | undefined,
   priceListId = "1",
 ): { ok: true; xml: string } | { ok: false; error: string } {
-  const allowed = new Set(["FamilyId", "Name", "ButtonText", "Order", "SaleableAsMain", "UseAsDirectSale", "Color"]);
+  const allowed = new Set(["FamilyId", "Name", "ButtonText", "Order", "SaleableAsMain", "UseAsDirectSale", "Color", "PreparationTypeId", "PreparationOrderId"]);
+  // Agora crashes the TPV if only one of the preparation pair is set: require both, both non-empty.
+  const hasType = "PreparationTypeId" in attrs, hasOrder = "PreparationOrderId" in attrs;
+  if (hasType !== hasOrder) return { ok: false, error: "RESTORE_PREPARATION_PAIR_INCOMPLETE" };
+  if (hasType && (!/^\d+$/.test(String(attrs.PreparationTypeId)) || !/^\d+$/.test(String(attrs.PreparationOrderId)))) {
+    return { ok: false, error: "RESTORE_BAD_PREPARATION" };
+  }
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const openMatch = /^<Product\b[^>]*?(\/?)>/.exec(productXml);
   if (!openMatch) return { ok: false, error: "RESTORE_BAD_PRODUCT_XML" };
