@@ -820,6 +820,19 @@ function saPedreraDulceCode(connection: any, wine: any): string | null {
   return commercialDCode(wine?.name);
 }
 
+export function pickLiveGlassFamily(
+  families: { Id: string | number; Name: string }[] | null | undefined,
+  mapping?: { id: string; name: string } | null,
+): { id: string; name: string } | null {
+  const list = families || [];
+  if (mapping?.id) {
+    const live = list.find((f) => String(f.Id) === String(mapping.id));
+    if (live) return { id: String(live.Id), name: String(live.Name) };
+  }
+  const copas = list.find((f) => String(f.Name || "").trim().toUpperCase() === "COPAS WINERIM");
+  return copas ? { id: String(copas.Id), name: String(copas.Name) } : null;
+}
+
 function saPedreraDedicatedFamily(
   connection: any,
   wine: any,
@@ -5002,6 +5015,13 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
 
   // deno-lint-ignore no-explicit-any
   function findFamilyId(wineType: string | null, formatType?: string, wine?: any): { id: string; needsCreate: boolean; familyName: string; parentId?: string; grandparentId?: string; color?: string; buttonText?: string } {
+    // Glasses always land in the live COPAS WINERIM family when the location
+    // has one (or in an explicit "copa" mapping), before any type/region
+    // routing rule can send them to the bottle family (Albariza 2026-10-02).
+    if (String(formatType || "").toUpperCase() === "GLASS") {
+      const glassFamily = pickLiveGlassFamily(families, customFamilyMappings?.copa);
+      if (glassFamily) return { id: glassFamily.id, needsCreate: false, familyName: glassFamily.name };
+    }
     // Per-connection two-level layout used by El Porton de Sorni:
     // wine type root > Spanish DO/region OR foreign country. Glasses and
     // magnums keep their dedicated format families.
