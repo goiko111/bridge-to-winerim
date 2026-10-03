@@ -1,5 +1,6 @@
 import { pickLiveGlassFamily } from "../_shared/agoraGlassFamily.ts";
 import { restoreAgoraProductXml } from "../_shared/agoraRestoreProduct.ts";
+import { isLegacyJsonTask } from "../_shared/agoraOutboundRouting.ts";
 import { AUTO_CREATE_MAX_PER_CYCLE, applyAutoCreateCap, guardCreateFormats } from "../_shared/agoraAutoCreateGuard.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { callerDeniedResponse, decideCaller, supabaseCallerDeps } from "../_shared/connectionCallerGuard.ts";
@@ -8214,6 +8215,16 @@ serve(async (req) => {
       if (taskErr || !task) {
         return new Response(JSON.stringify({ error: "Task not found" }),
           { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Fail closed: this JSON writer cannot apply XML-only tasks (restore/hide/XML upsert).
+      // Never mark them SUCCESS here; hand them back to the XML queue untouched.
+      if (!isLegacyJsonTask(task.task_type)) {
+        if (alreadyClaimed && task.status === "RUNNING") {
+          await supabase.from("outbound_tasks").update({ status: "QUEUED" }).eq("id", task.id);
+        }
+        return new Response(JSON.stringify({ success: false, status: "WRONG_WRITER", error: `Task type ${task.task_type} must run via process-xml-outbound-queue` }),
+          { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       const { data: caps } = await supabase
