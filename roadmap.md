@@ -26,4 +26,5 @@
 
 - [ ] Albariza: mover 8 botellas de generosos (VINOS) y B Fino Atávico a FORTIFICADOS WINERIM — GO dado 2026-10-03; caja sin respuesta (530)
 - [ ] Ruge: revisar familia de 20 botellas del 24-sep
-- [ ] Corrección productos desde 1-oct (simulación entregada 2026-10-03) — esperando confirmación; Albariza y El Bejeque sin lectura (403)
+- [x] Corrección impresora aplicada y verificada 2026-10-03: Casa Esteban 37, Katsu 16, Luruna 7, Clinic 2 (solo Preparation 1/1)
+- [ ] Quedan sin corregir: Cienvinos 23 + El Higuerón 1 + El Portón 1 (familia oculta sin destino visible), Qtomas 4 (sin impresora posible), Albariza y El Bejeque sin lectura (403)
