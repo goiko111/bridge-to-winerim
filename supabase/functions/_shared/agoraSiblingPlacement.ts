@@ -40,6 +40,8 @@ export interface SiblingPlacementInput {
   wineType: string | null | undefined;
   format: string;
   excludeProductId?: string;
+  /** Routed family: siblings are counted in it even when it is hidden. */
+  routedFamilyId?: string;
 }
 
 export interface SiblingPlacement {
@@ -48,20 +50,25 @@ export interface SiblingPlacement {
   preparation: { typeId: string; orderId: string } | null;
   /** Most frequent visible family among siblings. */
   familyId: string | null;
+  /** Siblings of the same type+format already living in the routed family (visible or not). */
+  routedSiblingCount: number;
 }
 
 export function siblingPlacement(input: SiblingPlacementInput): SiblingPlacement {
   const type = canonicalPlacementType(input.wineType);
   const fmt = canonicalPlacementFormat(input.format);
   const visible = new Set(input.families.filter(isFamilyVisible).map((f) => String(f.Id)));
-  const siblings = input.products.filter((p) => {
+  const sameKind = (p: PlacementProduct): boolean => {
     const id = String(p.Id);
     if (input.excludeProductId && id === input.excludeProductId) return false;
     const k = input.kinds.get(id);
     if (!k || !type) return false;
-    return canonicalPlacementType(k.wineType) === type && canonicalPlacementFormat(k.format) === fmt &&
-      visible.has(String(p.FamilyId ?? ""));
-  });
+    return canonicalPlacementType(k.wineType) === type && canonicalPlacementFormat(k.format) === fmt;
+  };
+  const siblings = input.products.filter((p) => sameKind(p) && visible.has(String(p.FamilyId ?? "")));
+  const routedSiblingCount = input.routedFamilyId
+    ? input.products.filter((p) => sameKind(p) && String(p.FamilyId ?? "") === String(input.routedFamilyId)).length
+    : 0;
   const pairs = siblings
     .filter((p) => String(p.PreparationTypeId || "") && String(p.PreparationOrderId || ""))
     .map((p) => `${p.PreparationTypeId}|${p.PreparationOrderId}`);
@@ -70,23 +77,27 @@ export function siblingPlacement(input: SiblingPlacementInput): SiblingPlacement
     siblingCount: siblings.length,
     preparation: pair ? { typeId: pair.split("|")[0], orderId: pair.split("|")[1] } : null,
     familyId: mode(siblings.map((p) => String(p.FamilyId))),
+    routedSiblingCount,
   };
 }
 
 /**
- * Family for a NEW product: keep the routed family when it is visible (or is
- * being created by this import); else the visible sibling family; else null
- * (do not create).
+ * Family for a NEW product: keep the routed family when it is visible, is
+ * being created by this import, or already holds siblings of the same
+ * type+format (sites selling from hidden Winerim families); else the visible
+ * sibling family; else null (do not create).
  */
 export function resolveVisibleFamily(
   routedFamilyId: string,
   routedNeedsCreate: boolean,
   families: PlacementFamily[],
   siblingFamilyId: string | null,
+  routedSiblingCount = 0,
 ): { familyId: string | null; reason: string } {
   if (routedNeedsCreate) return { familyId: routedFamilyId, reason: "family_created_visible" };
   const routed = families.find((f) => String(f.Id) === String(routedFamilyId));
   if (isFamilyVisible(routed)) return { familyId: routedFamilyId, reason: "routed_visible" };
+  if (routedSiblingCount > 0) return { familyId: routedFamilyId, reason: "routed_hidden_with_siblings" };
   if (siblingFamilyId) return { familyId: siblingFamilyId, reason: "sibling_visible_family" };
   return { familyId: null, reason: "no_visible_family" };
 }
