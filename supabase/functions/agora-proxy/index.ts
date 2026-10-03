@@ -78,6 +78,9 @@ import {
   shouldSortAgoraProductsAlphabetically,
 } from "../_shared/agoraProductPresentation.ts";
 import { isAgoraTimestampOldEnough } from "../_shared/agoraLocalTime.ts";
+import { resolvePreparation, resolveVisibleFamily, siblingPlacement, type ProductKind } from "../_shared/agoraSiblingPlacement.ts";
+// connection_id -> (agora product id -> wine type/format); filled by loadCustomFamilyMappings.
+const agoraProductKindsCache = new Map<string, Map<string, ProductKind>>();
 import {
   agoraDocumentType,
   buildAgoraInvoiceDocId,
@@ -4978,6 +4981,17 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
   const defaultWarehouseId = connection.default_warehouse_id || (warehouses.length > 0 ? warehouses[0].Id : "1");
   const autoCreateFamilies = connection.auto_create_families ?? false;
 
+  const existingProductIdSet = new Set(existingProducts.map((p) => String(p.Id)));
+  const productKinds = agoraProductKindsCache.get(String(connection.id || "")) || new Map<string, ProductKind>();
+  function explicitPreparationRoute(formatType: string): { typeId: string; orderId: string } | null {
+    const routes = providerConfig.preparation_routes && typeof providerConfig.preparation_routes === "object"
+      ? providerConfig.preparation_routes as Record<string, unknown> : {};
+    const route = routes[formatType] && typeof routes[formatType] === "object" ? routes[formatType] as Record<string, unknown> : null;
+    const typeId = String(route?.typeId || route?.preparationTypeId || "");
+    const orderId = String(route?.orderId || route?.preparationOrderId || "");
+    return typeId && orderId ? { typeId, orderId } : null;
+  }
+
   function preparationPairForFormat(formatType: string): { typeId: string; orderId: string; valid: boolean; error?: string } {
     if (forceEmptyPreparation) return { typeId: "", orderId: "", valid: true };
 
@@ -5544,7 +5558,7 @@ ${costPricesXml}
       // Skip formats with missing required fields
       if (!validation.valid) continue;
 
-      const preparationPair = preparationPairForFormat(fmt);
+      let preparationPair = preparationPairForFormat(fmt);
       if (!preparationPair.valid) {
         validationResults.push({
           winerimId: String(winerimId),
@@ -5567,13 +5581,33 @@ ${costPricesXml}
       const dedicatedSaPedreraFamily = saPedreraDedicatedFamily(connection, formatWine, fmt);
       const productId = deterministicAgoraProductId(connection, formatWine, fmt);
 
-      const familyResult = orderedDulceCode
+      let familyResult: { id: string; needsCreate: boolean; familyName: string; [k: string]: unknown } = orderedDulceCode
         ? { id: "903925", needsCreate: false, familyName: "DULCES WINERIM" }
         : dedicatedSaPedreraFamily
           ? dedicatedSaPedreraFamily
         // Extended formats live in the same family as the bottle of the wine,
         // so the room finds them next to the reference they already know.
         : findFamilyId(wineType, isExtended ? "BOTTLE" : fmt, formatWine);
+      // NEW products only: visible family + printer copied from live siblings
+      // (same wine type and format). Existing products are never re-routed.
+      if (!orderedDulceCode && !dedicatedSaPedreraFamily && !existingProductIdSet.has(String(productId)) && (fmt === "BOTTLE" || fmt === "GLASS")) {
+        const sib = siblingPlacement({ families, products: existingProducts as any, kinds: productKinds, wineType, format: fmt });
+        const fam = resolveVisibleFamily(String(familyResult.id), Boolean(familyResult.needsCreate), families, sib.familyId);
+        if (!fam.familyId) {
+          validationResults.push({
+            winerimId: String(winerimId), formatType: fmt,
+            validation: { valid: false, warnings: [`No visible Agora family for ${wineType || "?"} ${fmt}; routed family ${familyResult.id} is hidden — not created.`], missingFields: [],
+              error: { code: "NO_VISIBLE_FAMILY", message: `Routed family ${familyResult.id} hidden and no visible siblings` } },
+          });
+          continue;
+        }
+        if (fam.familyId !== String(familyResult.id)) {
+          const live = families.find((f) => String(f.Id) === fam.familyId);
+          familyResult = { id: fam.familyId, needsCreate: false, familyName: String(live?.Name || fam.familyId) };
+        }
+        const prep = resolvePreparation(explicitPreparationRoute(fmt), sib.preparation, { typeId: preparationPair.typeId, orderId: preparationPair.orderId });
+        preparationPair = { typeId: prep.typeId, orderId: prep.orderId, valid: true };
+      }
       if (familyResult.needsCreate && !newFamilies.some(f => f.id === familyResult.id)) {
         newFamilies.push({ id: familyResult.id, name: familyResult.familyName });
       }
@@ -8702,6 +8736,7 @@ serve(async (req) => {
 
     // ── Helper: Load custom family mappings for a connection ──
     async function loadCustomFamilyMappings(connId: string): Promise<Record<string, { id: string; name: string }> | undefined> {
+      try { agoraProductKindsCache.set(String(connId), await loadAgoraProductKinds(connId)); } catch (e) { console.warn("[product-kinds] load failed", e); }
       const { data: mappings } = await supabase
         .from("wine_type_family_mappings")
         .select("mapping_key, agora_family_id, agora_family_name")
@@ -8714,6 +8749,31 @@ serve(async (req) => {
         }
       }
       return Object.keys(result).length > 0 ? result : undefined;
+    }
+
+    async function loadAgoraProductKinds(connId: string): Promise<Map<string, ProductKind>> {
+      const types = new Map<string, string>();
+      for (let from = 0; ; from += 1000) {
+        const { data } = await supabase.from("winerim_wines").select("winerim_id, wine_type").eq("connection_id", connId).range(from, from + 999);
+        for (const w of data || []) types.set(String((w as any).winerim_id), String((w as any).wine_type || ""));
+        if (!data || data.length < 1000) break;
+      }
+      const kinds = new Map<string, ProductKind>();
+      const add = (pid: unknown, wid: unknown, fmt: unknown) => {
+        const t = types.get(String(wid ?? ""));
+        if (pid && t && fmt && !kinds.has(String(pid))) kinds.set(String(pid), { wineType: t, format: String(fmt).toUpperCase() });
+      };
+      for (let from = 0; ; from += 1000) {
+        const { data } = await supabase.from("winerim_push_tracking").select("agora_product_id, winerim_wine_id, format").eq("connection_id", connId).range(from, from + 999);
+        for (const r of data || []) add((r as any).agora_product_id, (r as any).winerim_wine_id, (r as any).format);
+        if (!data || data.length < 1000) break;
+      }
+      for (let from = 0; ; from += 1000) {
+        const { data } = await supabase.from("product_mappings").select("agora_product_id, winerim_wine_id, format_type").eq("connection_id", connId).not("agora_product_id", "is", null).range(from, from + 999);
+        for (const r of data || []) add((r as any).agora_product_id, (r as any).winerim_wine_id, (r as any).format_type);
+        if (!data || data.length < 1000) break;
+      }
+      return kinds;
     }
 
     // ── CREATE PILOT FAMILIES ──
