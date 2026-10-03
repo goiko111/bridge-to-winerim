@@ -23,3 +23,6 @@
 - [ ] Prioridad 2 a/c: vinos no reconocidos (solo lectura)
 - [ ] Taberna de Elia 19+3 → 0; Albariza +6 copas
 - [ ] Diseño motor: añadir puntos del 30-sep
+
+- [ ] Albariza: mover 8 botellas de generosos (VINOS) y B Fino Atávico a FORTIFICADOS WINERIM — GO dado 2026-10-03; caja sin respuesta (530)
+- [ ] Ruge: revisar familia de 20 botellas del 24-sep
