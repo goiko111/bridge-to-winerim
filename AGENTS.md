@@ -12,3 +12,5 @@
 
 - Cambios de funciones pendientes de OK se preparan fuera de `supabase/functions/` (p. ej. `/tmp` o `docs/pending/`): editar ahí despliega solo — el 30-sep se publicaron agora-proxy y winerim-proxy sin OK.
 - New Agora glasses use semantic wine-type colors and a free Order within their type block; existing product Order values are never rewritten by an individual create — preserves stable POS layouts.
+
+- Agora new products (XML UPSERT, BOTTLE/GLASS, id not yet in Agora) take printer = explicit preparation_routes > most frequent pair of visible same type+format siblings > connection default, and only visible families (hidden routed family → sibling family, else NO_VISIBLE_FAMILY, not created) via `_shared/agoraSiblingPlacement.ts` — stops new wines landing hidden or unprinted.

@@ -26,3 +26,4 @@
 
 - [ ] Albariza: mover 8 botellas de generosos (VINOS) y B Fino Atávico a FORTIFICADOS WINERIM — GO dado 2026-10-03; caja sin respuesta (530)
 - [ ] Ruge: revisar familia de 20 botellas del 24-sep
+- [ ] Corrección productos desde 1-oct (simulación entregada 2026-10-03) — esperando confirmación; Albariza y El Bejeque sin lectura (403)
