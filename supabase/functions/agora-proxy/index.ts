@@ -5591,8 +5591,8 @@ ${costPricesXml}
       // NEW products only: visible family + printer copied from live siblings
       // (same wine type and format). Existing products are never re-routed.
       if (!orderedDulceCode && !dedicatedSaPedreraFamily && !existingProductIdSet.has(String(productId)) && (fmt === "BOTTLE" || fmt === "GLASS")) {
-        const sib = siblingPlacement({ families, products: existingProducts as any, kinds: productKinds, wineType, format: fmt });
-        const fam = resolveVisibleFamily(String(familyResult.id), Boolean(familyResult.needsCreate), families, sib.familyId);
+        const sib = siblingPlacement({ families, products: existingProducts as any, kinds: productKinds, wineType, format: fmt, routedFamilyId: String(familyResult.id) });
+        const fam = resolveVisibleFamily(String(familyResult.id), Boolean(familyResult.needsCreate), families, sib.familyId, sib.routedSiblingCount);
         if (!fam.familyId) {
           validationResults.push({
             winerimId: String(winerimId), formatType: fmt,
